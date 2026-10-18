@@ -67,6 +67,10 @@ def execute(args) -> int:
     limit = config["digest"]["max_items"]
     backlog_days = config["digest"].get("backlog_days", 30)
     trial_days = config["digest"].get("trial_days",0)
+    end_date=config['digest'].get('trial_end_date')
+    if end_date:
+        from datetime import date
+        end_date=date.fromisoformat(end_date)
     if not isinstance(trial_days,int) or trial_days<0:
         raise RuntimeError("trial_days は0以上の整数で指定してください")
     if not 1 <= backlog_days <= 30:
@@ -84,7 +88,13 @@ def execute(args) -> int:
     with run_lock(data_dir):
         store = Store(data_dir / "state.sqlite3")
         try:
+            seed_path=args.config.parent/'bootstrap_state.json'
+            if not args.demo and seed_path.exists():
+                store.seed(json.loads(seed_path.read_text(encoding='utf-8')))
             if args.send:
+                if end_date and now.astimezone(JST).date()>end_date:
+                    print('試用の固定終了日を過ぎたため、メール送信を停止しています。')
+                    return 0
                 if not trial_active(store.get("trial_started_on"),now,trial_days):
                     print(f"{trial_days}日間の試用期間が終了しました。メール送信を停止しています。")
                     return 0
@@ -92,6 +102,8 @@ def execute(args) -> int:
                 if resume_outbox(store, data_dir):
                     print("保留していたメールの送信受付を確認しました。新規送信は次回に行います。")
                     return 0
+                if store.pending_delivery():
+                    raise MailError('送信未確定の履歴があり再送内容を復元できません。メールサービスの履歴確認が必要です。新規送信を停止しました')
             if (args.scheduled or (args.send and trial_days)) and not due(store.get("last_sent"), now, config["digest"]["interval_hours"]):
                 print("本日の配信は完了しています（日本時間の日付で判定）。")
                 return 0

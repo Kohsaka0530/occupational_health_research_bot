@@ -9,7 +9,7 @@ from research_bot.journals import CORE, eligible_journal, journal_group, searche
 from research_bot.queue import daily_selection
 from research_bot.cli import due,trial_active
 from research_bot.sources import europe_pmc
-from research_bot.store import Store
+from research_bot.store import Store,fingerprints
 
 
 TODAY = date(2026, 10, 18)
@@ -72,6 +72,18 @@ class JournalPolicyTest(unittest.TestCase):
 
 
 class DailyQueueTest(unittest.TestCase):
+    def test_seeded_history_excludes_first_email_after_moving_to_new_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Store(Path(tmp)/'state.sqlite3')
+            try:
+                a=paper('already-sent')
+                store.seed({'reported_keys':list(fingerprints(a)), 'trial_started_on':'2026-10-18','last_sent':'2026-10-18T13:00:00+00:00'})
+                store.add([a,paper('new-paper')])
+                pending=store.candidates(datetime.now(timezone.utc)-timedelta(days=1))
+                self.assertEqual([x.title for x in pending],[paper('new-paper').title])
+                self.assertEqual(store.get('trial_started_on'),'2026-10-18')
+            finally:store.close()
+
     def test_trial_runs_ten_calendar_days_and_stops_before_day_eleven(self):
         self.assertTrue(trial_active(None,datetime(2026,10,18,tzinfo=timezone.utc),10))
         self.assertTrue(trial_active('2026-10-19',datetime(2026,10,27,22,tzinfo=timezone.utc),10))

@@ -34,7 +34,7 @@ jobs:
         id: state
         uses: actions/cache/restore@v4
         with:
-          path: data
+          path: data/state.sqlite3
           key: research-brief-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: research-brief-state-
       - name: Generate and deliver when due
@@ -43,13 +43,13 @@ jobs:
           RESEARCH_MAIL_API_KEY: ${{ secrets.RESEARCH_MAIL_API_KEY }}
           RESEARCH_LLM_MODEL: ${{ vars.RESEARCH_LLM_MODEL || 'gpt-4.1-mini' }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM || 'onboarding@resend.dev' }}
         run: python -m research_bot.cli run --send --scheduled
       - name: Preserve state even if an external request failed
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: data
+          path: data/state.sqlite3
           key: research-brief-state-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Save readable reports
         if: always()

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .core import Article, utcnow
+
+
+def fingerprints(article: Article) -> set[str]:
+    return {kind+":"+hashlib.sha256(value.encode()).hexdigest() for kind,value in
+            [("url",article.url),("doi",article.doi),("title",article.title_key)] if value}
 
 
 class Store:
@@ -20,6 +26,7 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS article_titles ON articles(title_key);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS reported_fingerprints (key TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS deliveries (
                 digest_id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL,
                 provider_id TEXT
@@ -65,7 +72,26 @@ class Store:
     def candidates(self, since: datetime) -> list[Article]:
         rows = self.db.execute("SELECT payload FROM articles WHERE reported_at IS NULL AND first_seen>=?",
                                (since.isoformat(),)).fetchall()
-        return [Article(**json.loads(row[0])) for row in rows]
+        reported={row[0] for row in self.db.execute('SELECT key FROM reported_fingerprints')}
+        articles=[Article(**json.loads(row[0])) for row in rows]
+        return [a for a in articles if not fingerprints(a)&reported]
+
+    def seed(self, payload: dict):
+        """Import only hashes and dates; never import keys, addresses or messages."""
+        import re
+        keys=payload.get('reported_keys',[])
+        if not isinstance(keys,list) or any(not isinstance(k,str) or not re.fullmatch(r'(?:url|doi|title):[0-9a-f]{64}',k) for k in keys):
+            raise ValueError('初期送信履歴の形式が不正です')
+        with self.db:
+            self.db.executemany('INSERT OR IGNORE INTO reported_fingerprints VALUES (?)',[(k,) for k in keys])
+            for key in ['trial_started_on','last_sent']:
+                if payload.get(key):
+                    # Validate dates without printing any input values.
+                    datetime.fromisoformat(payload[key])
+                    self.db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)',(key,payload[key]))
+
+    def pending_delivery(self) -> bool:
+        return self.db.execute("SELECT 1 FROM deliveries WHERE status='pending' LIMIT 1").fetchone() is not None
 
     def observations(self, now: datetime) -> dict:
         counts: dict[str, dict[str, int]] = {}
@@ -97,6 +123,11 @@ class Store:
 
     def mark_sent(self, digest_id: str, provider_id: str, ids: list[str], now: datetime):
         with self.db:
+            for identifier in ids:
+                row=self.db.execute('SELECT payload FROM articles WHERE id=?',(identifier,)).fetchone()
+                if row:
+                    self.db.executemany('INSERT OR IGNORE INTO reported_fingerprints VALUES (?)',
+                                        [(k,) for k in fingerprints(Article(**json.loads(row[0])))])
             self.db.execute("UPDATE deliveries SET status='sent', provider_id=? WHERE digest_id=?", (provider_id, digest_id))
             self.db.executemany("""UPDATE articles SET reported_at=? WHERE id=? OR
                 json_extract(payload,'$.url')=(SELECT json_extract(payload,'$.url') FROM articles WHERE id=?)""",

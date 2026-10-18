@@ -1,0 +1,61 @@
+name: Occupational health research brief
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 22:00 UTC = next day 07:00 JST. Deliver up to 10 papers every day.
+    - cron: '0 22 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-brief-delivery
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare meeting document extraction
+        run: |
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends poppler-utils
+          fi
+      - name: Validate agent
+        run: python -m unittest discover -s tests -v
+      - name: Restore delivery history and pending outbox
+        id: state
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: research-brief-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: research-brief-state-
+      - name: Generate and deliver when due
+        env:
+          RESEARCH_LLM_API_KEY: ${{ secrets.RESEARCH_LLM_API_KEY }}
+          RESEARCH_MAIL_API_KEY: ${{ secrets.RESEARCH_MAIL_API_KEY }}
+          RESEARCH_LLM_MODEL: ${{ vars.RESEARCH_LLM_MODEL || 'gpt-4.1-mini' }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: python -m research_bot.cli run --send --scheduled
+      - name: Preserve state even if an external request failed
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: research-brief-state-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Save readable reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-brief-${{ github.run_id }}
+          path: output/
+          if-no-files-found: ignore
+          retention-days: 30

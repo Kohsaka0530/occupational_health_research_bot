@@ -1,0 +1,33 @@
+[digest]
+initial_days = 30
+overlap_days = 7
+max_items = 10
+interval_hours = 24
+backlog_days = 30
+trial_days = 10
+
+[sources]
+europe_pmc = true
+crossref = true
+mhlw = true
+mhlw_meetings = true
+domestic_news = true
+domestic_max_items = 5
+domestic_max_pages = 12
+meeting_indexes = 12
+page_size = 50
+max_pages = 2
+curated_journals = true
+focused_queries = [
+  '(JOURNAL:"Lancet" OR JOURNAL:"The Lancet Public Health" OR JOURNAL:"The Lancet Digital Health" OR JOURNAL:"New England Journal of Medicine" OR JOURNAL:"JAMA" OR JOURNAL:"BMJ" OR JOURNAL:"Annals of Internal Medicine")',
+  '("gig workers" OR "delivery workers" OR "freelance" OR "platform workers")',
+  '("digital health" OR "machine learning" OR "wearable" OR "small business" OR "small and medium")',
+]
+crossref_queries = ["gig workers health", "working hours mental health", "small business workplace health"]
+
+[llm]
+model = "gpt-4.1-mini"
+max_output_tokens = 10000
+
+# Paper full text is not fetched. Domestic HTML/PDF excerpts are retrieved
+# separately, within explicit limits. Never put keys or email addresses here.

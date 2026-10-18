@@ -1,4 +1,6 @@
 import tempfile
+import contextlib
+import io
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -7,7 +9,7 @@ from unittest.mock import patch
 from research_bot.core import Article, rank
 from research_bot.journals import CORE, eligible_journal, journal_group, searches
 from research_bot.queue import daily_selection
-from research_bot.cli import due,trial_active
+from research_bot.cli import due,trial_active,main,ROOT
 from research_bot.sources import europe_pmc
 from research_bot.store import Store,fingerprints
 
@@ -72,6 +74,17 @@ class JournalPolicyTest(unittest.TestCase):
 
 
 class DailyQueueTest(unittest.TestCase):
+    def test_fixed_end_stops_even_when_runner_history_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)
+            config=path/'config.toml'
+            config.write_text((ROOT/'config.toml').read_text())
+            with patch('research_bot.cli.utcnow',return_value=datetime(2026,10,27,15,tzinfo=timezone.utc)), \
+                 patch('research_bot.cli.mail_config') as mail_config, contextlib.redirect_stdout(io.StringIO()):
+                result=main(['run','--send','--scheduled','--config',str(config),'--data-dir',str(path/'data'),'--output',str(path/'output')])
+            self.assertEqual(result,0)
+            mail_config.assert_not_called()
+
     def test_seeded_history_excludes_first_email_after_moving_to_new_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=Store(Path(tmp)/'state.sqlite3')

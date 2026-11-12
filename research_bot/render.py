@@ -111,6 +111,7 @@ def render_html(report: dict) -> str:
         body.append(f'<h2>{i}. {escape(title)}</h2>')
         if s:
             body.append(f'<p class="original">{escape(a["title"])}</p>')
+        body.append(f'<p class="meta">著者：{escape(a.get("authors") or "著者情報未取得")}</p>')
         body.append(f'<p class="meta">{escape(a["journal"] or a["source"])} ／ 公表：{escape(a["published"] or "日付未取得")}<br>取得元：{escape(a["source"])} ／ 要約の根拠：{escape(basis)} ／ 全文未確認</p>')
         if a["kind"] == "学術論文":
             body.append('<p class="meta">掲載種別は書誌情報による分類です。査読状況は個別確認していません。</p>')
@@ -172,7 +173,7 @@ def render_text(report: dict) -> str:
     for i, a in enumerate(report["articles"], 1):
         s = summaries.get(a["id"])
         lines.extend([f'{i}. {s["title_ja"] if s else a["title"]}',
-                      a["title"], f'{a["kind"]} / {a["journal"] or a["source"]} / 公表：{a["published"]}'])
+                      a["title"], "著者：" + (a.get("authors") or "著者情報未取得"), f'{a["kind"]} / {a["journal"] or a["source"]} / 公表：{a["published"]}'])
         if s:
             lines.extend(label + "：" + s[k] for k, label in LABELS.items())
         else:
@@ -221,7 +222,7 @@ def render_markdown(report: dict) -> str:
     for i, a in enumerate(report["articles"], 1):
         s = summaries.get(a["id"])
         lines.extend([f'## {i}. {md(s["title_ja"] if s else a["title"])}', "",
-                      md(a["title"]), "", md(a["journal"] or a["source"]) + " ／ 公表：" + md(a["published"]), "",
+                      md(a["title"]), "", "著者：" + md(a.get("authors") or "著者情報未取得"), "", md(a["journal"] or a["source"]) + " ／ 公表：" + md(a["published"]), "",
                       "取得元：" + md(a["source"]) + " ／ " + md(a["kind"]) + " ／ 全文未確認・査読状況は個別未確認", ""])
         if s:
             for key, label in LABELS.items():

@@ -78,7 +78,12 @@ class DailyQueueTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)
             config=path/'config.toml'
-            config.write_text((ROOT/'config.toml').read_text())
+            config.write_text("\n".join(
+                'trial_end_date = "2026-10-27"'
+                if line.strip().startswith("trial_end_date")
+                else line
+                for line in (ROOT/'config.toml').read_text().splitlines()
+            ))
             with patch('research_bot.cli.utcnow',return_value=datetime(2026,10,27,15,tzinfo=timezone.utc)), \
                  patch('research_bot.cli.mail_config') as mail_config, contextlib.redirect_stdout(io.StringIO()):
                 result=main(['run','--send','--scheduled','--config',str(config),'--data-dir',str(path/'data'),'--output',str(path/'output')])

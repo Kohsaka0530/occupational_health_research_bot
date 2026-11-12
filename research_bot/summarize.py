@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections import Counter
 
 from .core import Article
 from .net import FetchError, request
@@ -18,7 +20,7 @@ SYSTEM = '''あなたは産業保健研究者向けの日本語リサーチブ�
 取得日時と公表日を区別し、古い論文を新刊と呼ばず、索引更新で見つかった可能性を尊重してください。
 各文献について自然な日本語で、title_ja, purpose(目的), methods(研究方法), findings(主な結果),
 limitations(限界), implications(産業保健への示唆)を作成します。
-入力の全idをsummariesにちょうど1回ずつ含めます。重要度や件数を理由に省略しません。
+入力の全idをsummariesにちょうど1回ずつ含めます。idを短縮・変更したり、DOI・連番・題名に置き換えません。重要度や件数を理由に省略しません。
 原文にない人数、効果量、因果関係、対象集団、研究デザイン、政策の効力を創作しません。
 観察研究の関連を原因と書きません。レビュー・論説・政策発表はその種類に即して記述します。
 未記載の点は「抄録に記載なし」「概要では判断できない」と明記します。
@@ -38,14 +40,25 @@ URLは生成しません。以下のJSONオブジェクトだけを出力しま�
 '''
 
 
+def summary_id_issues(items: list, expected: set[str]) -> tuple[set[str], int, set[str]]:
+    """Inspect IDs without guessing correspondence from order or titles."""
+    ids = [item.get("id") if isinstance(item, dict) else None for item in items]
+    counts = Counter(i for i in ids if isinstance(i, str) and i in expected)
+    invalid = sum(not isinstance(i, str) or i not in expected for i in ids)
+    return expected - counts.keys(), invalid, {i for i, count in counts.items() if count > 1}
+
+
 def validate(payload: dict, articles: list[Article]) -> dict:
     if not isinstance(payload, dict) or not isinstance(payload.get("summaries"), list):
         raise SummaryError("要約のJSON形式が不正です")
     expected = {a.id for a in articles}
+    missing, invalid, duplicate = summary_id_issues(payload["summaries"], expected)
+    if invalid or duplicate:
+        raise SummaryError(
+            f"要約と文献IDの対応を検証できません（不正ID・形式{invalid}件、"
+            f"重複ID{len(duplicate)}件、欠落{len(missing)}件）")
     seen = set()
     for item in payload["summaries"]:
-        if not isinstance(item, dict) or item.get("id") not in expected or item["id"] in seen:
-            raise SummaryError("要約と文献IDの対応を検証できません")
         seen.add(item["id"])
         if any(not isinstance(item.get(k), str) or not item[k].strip() or len(item[k]) > 4000 for k in FIELDS):
             raise SummaryError("要約の必須項目が不足または長すぎます")
@@ -86,7 +99,7 @@ def summarize(articles: list[Article], observations: dict, config: dict) -> dict
     body = {"model": model, "temperature": 0.2, "max_tokens": config["max_output_tokens"],
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": json.dumps({"supplied_sources": supplied, "observations": observations}, ensure_ascii=False)}]}
+                         {"role": "user", "content": json.dumps({"required_ids": [a.id for a in articles], "supplied_sources": supplied, "observations": observations}, ensure_ascii=False)}]}
     try:
         def complete(payload):
             raw = json.loads(request("https://api.openai.com/v1/chat/completions", data=payload,
@@ -98,9 +111,21 @@ def summarize(articles: list[Article], observations: dict, config: dict) -> dict
         payload = complete(body)
         expected = {a.id for a in articles}
         items = payload.get("summaries", []) if isinstance(payload,dict) else []
-        ids = [s.get("id") for s in items if isinstance(s,dict)] if isinstance(items,list) else []
-        if isinstance(items,list) and len(ids)==len(items) and all(isinstance(i,str) and i in expected for i in ids) and len(set(ids))==len(ids):
-            missing = expected-set(ids)
+        if isinstance(items, list):
+            missing, invalid, duplicate = summary_id_issues(items, expected)
+            if invalid or duplicate:
+                logging.getLogger(__name__).warning(
+                    "論文要約のID対応不正: 不正ID・形式%d件、重複ID%d件、欠落%d件。元資料から1回だけ再生成します。",
+                    invalid, len(duplicate), len(missing))
+                # Ambiguous correspondence: discard the entire response, including
+                # research ideas. Never relabel an existing summary or pick a duplicate.
+                repair = dict(body)
+                repair["messages"] = [body["messages"][0], {"role": "user", "content": json.dumps({
+                    "instruction": "前の応答はID対応が不正でした。以下の全idを変更せず、各idにつき要約をちょうど1件作成してください。研究の芽のsource_idsも入力idだけを使ってください。",
+                    "required_ids": [a.id for a in articles],
+                    "supplied_sources": supplied, "observations": observations}, ensure_ascii=False)}]
+                # One bounded retry; the same strict validator is mandatory.
+                return validate(complete(repair), articles)
             if missing:
                 repair = dict(body)
                 repair["messages"] = [body["messages"][0], {"role":"user","content":json.dumps({

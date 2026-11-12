@@ -4,8 +4,8 @@ overlap_days = 7
 max_items = 10
 interval_hours = 24
 backlog_days = 30
-trial_days = 10
-trial_end_date = "2026-10-27"
+trial_days = 365
+trial_end_date = "2027-10-27"
 
 [sources]
 europe_pmc = true

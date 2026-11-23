@@ -234,6 +234,9 @@ class EndToEndTest(unittest.TestCase):
     def test_real_pipeline_with_stubbed_external_sources_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp)
+            # Keep the fixed publication fixture inside the 30-day queue window,
+            # independently of the day GitHub Actions runs this test.
+            now = datetime(2026, 10, 18, tzinfo=timezone.utc)
             a = article(journal="Journal of Occupational Health")
             _, sample = demo_data()
             s = sample["summaries"][0].copy()
@@ -241,11 +244,16 @@ class EndToEndTest(unittest.TestCase):
             response = dict(summaries=[s], research_ideas=[], editor_note="テスト")
             config = p / "config.toml"
             config.write_text((ROOT / "config.toml").read_text().replace("crossref = true", "crossref = false").replace("mhlw = true", "mhlw = false").replace("mhlw_meetings = true", "mhlw_meetings = false").replace("domestic_news = true", "domestic_news = false"))
-            with patch.dict("research_bot.cli.COLLECTORS", {"europe_pmc": lambda *args: ([a], False)}), \
-                 patch("research_bot.cli.summarize", return_value=response), contextlib.redirect_stdout(io.StringIO()):
+            with patch("research_bot.cli.utcnow", return_value=now), \
+                 patch("research_bot.store.utcnow", return_value=now), \
+                 patch.dict("research_bot.cli.COLLECTORS", {"europe_pmc": lambda *args: ([a], False)}), \
+                 patch("research_bot.cli.summarize", return_value=response) as summarize, contextlib.redirect_stdout(io.StringIO()):
                 code = main(["run", "--config", str(config), "--data-dir", str(p / "data"), "--output", str(p / "out")])
             self.assertEqual(code, 0)
             result = json.loads((p / "out/latest.json").read_text())
+            self.assertEqual(result["created_at"], now.isoformat())
+            self.assertEqual(len(result["articles"]), 1)
+            summarize.assert_called_once()
             self.assertEqual(result["articles"][0]["url"], a.url)
             self.assertEqual(result["summary"]["summaries"][0]["id"], a.id)
             self.assertTrue((p / "out/latest.html").exists())
